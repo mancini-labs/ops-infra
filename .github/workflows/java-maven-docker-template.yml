@@ -1,6 +1,5 @@
 name: Template Java (Maven + Sonar + Docker)
 
-# A MÁGICA ACONTECE AQUI: Em vez de 'push', usamos 'workflow_call'
 on:
   workflow_call:
     inputs:
@@ -13,16 +12,22 @@ on:
         type: string
       sonar-organization:
         required: false
-        default: 'mancinidsb' # Seu padrão
+        default: 'mancinidsb'
         type: string
       docker-image-name:
         required: true
         type: string
+      # 1. NOVO INPUT PARA CONTROLE
+      enable-coveralls:
+        required: false
+        type: boolean
+        default: false 
     secrets:
       SONAR_TOKEN:
         required: true
+      # 2. SEGREDO AGORA É OPCIONAL
       COVERALLS_REPO_TOKEN:
-        required: true
+        required: false 
       DOCKER_USERNAME:
         required: true
       DOCKER_PASSWORD:
@@ -51,25 +56,32 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      - name: Build, Test, Coveralls & Sonar
+      # 3. PASSO 1: Build, Testes e Sonar (Sempre roda)
+      # Removido o coveralls daqui
+      - name: Build, Test & SonarCloud
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
-          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-        # AQUI MUDAMOS PARA USAR OS INPUTS
         run: >
           mvn -B verify 
-          org.sonarsource.scanner.maven:sonar-maven-plugin:5.0.0.4389:sonar 
-          jacoco:report coveralls:report 
+          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar 
+          jacoco:report 
           -Dsonar.projectKey=${{ inputs.sonar-project-key }}
           -Dsonar.organization=${{ inputs.sonar-organization }}
-          -Dsonar.host.url=https://sonarcloud.io 
+          -Dsonar.host.url=https://sonarcloud.io
+
+      # 4. PASSO 2: Coveralls (Só roda se ativado)
+      - name: Upload to Coveralls
+        if: inputs.enable-coveralls == true
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        run: >
+          mvn coveralls:report 
           -DrepoToken=$COVERALLS_REPO_TOKEN 
           -Dbranch="$BRANCH_NAME"
 
       - name: Login to Docker Hub
-        # Esse passo só roda se quem chamou foi um PUSH (e não Pull Request)
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
@@ -82,5 +94,4 @@ jobs:
         with:
           context: .
           push: true
-          # AQUI MUDAMOS PARA USAR O NOME DA IMAGEM DINÂMICO
           tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.docker-image-name }}:latest

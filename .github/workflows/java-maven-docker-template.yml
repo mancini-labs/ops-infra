@@ -1,0 +1,86 @@
+name: Template Java (Maven + Sonar + Docker)
+
+# A MÁGICA ACONTECE AQUI: Em vez de 'push', usamos 'workflow_call'
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        required: false
+        default: '21'
+        type: string
+      sonar-project-key:
+        required: true
+        type: string
+      sonar-organization:
+        required: false
+        default: 'mancinidsb' # Seu padrão
+        type: string
+      docker-image-name:
+        required: true
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        required: true
+      COVERALLS_REPO_TOKEN:
+        required: true
+      DOCKER_USERNAME:
+        required: true
+      DOCKER_PASSWORD:
+        required: true
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Build, Test, Coveralls & Sonar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        # AQUI MUDAMOS PARA USAR OS INPUTS
+        run: >
+          mvn -B verify 
+          org.sonarsource.scanner.maven:sonar-maven-plugin:5.0.0.4389:sonar 
+          jacoco:report coveralls:report 
+          -Dsonar.projectKey=${{ inputs.sonar-project-key }}
+          -Dsonar.organization=${{ inputs.sonar-organization }}
+          -Dsonar.host.url=https://sonarcloud.io 
+          -DrepoToken=$COVERALLS_REPO_TOKEN 
+          -Dbranch="$BRANCH_NAME"
+
+      - name: Login to Docker Hub
+        # Esse passo só roda se quem chamou foi um PUSH (e não Pull Request)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # AQUI MUDAMOS PARA USAR O NOME DA IMAGEM DINÂMICO
+          tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.docker-image-name }}:latest
